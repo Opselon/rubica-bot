@@ -61,6 +61,17 @@ python3 install.py --non-interactive \
   --port 8080
 ```
 
+### دانلود از گیت‌هاب + نصب یکجا
+
+```bash
+python3 install.py \
+  --github-repo https://github.com/your-org/rubica-bot \
+  --install-path /opt/rubica-bot \
+  --non-interactive \
+  --token YOUR_TOKEN \
+  --webhook-base-url https://your-domain.example
+```
+
 > خروجی `rubika-bot.service` در ریشه پروژه ایجاد می‌شود؛ برای نصب سیستم‌عامل آن را به `/etc/systemd/system/` کپی کنید و `systemctl daemon-reload` بزنید.
 
 ## تنظیم وبهوک و Endpoint
@@ -113,6 +124,15 @@ python3 install.py --non-interactive \
 - `/help` نمایش راهنما
 - `/setcmd` ثبت دستورات در روبیکا
 - `/panel` پنل تنظیمات
+- `/uptime` زمان اجرای بات
+- `/stats` آمار پردازش
+- `/echo` تکرار متن
+- `/id` نمایش شناسه‌ها
+- `/time` زمان سرور
+- `/calc` محاسبه سریع
+- `/about` نسخه بات
+- `/settings` تنظیمات گروه
+- `/admins` تعداد ادمین‌ها
 - `/antilink on|off` مدیریت ضد لینک
 - `/filter add|del|list <word>` مدیریت فیلترها
 - `/del <n>` حذف انبوه پیام‌های اخیر
@@ -171,6 +191,7 @@ python -m app.cli.botctl deploy --path /opt/rubika_bot --source .
 python -m app.cli.botctl rollback --path /opt/rubika_bot
 python -m app.cli.botctl status
 python -m app.cli.botctl logs
+python -m app.cli.botctl check
 ```
 
 ## استقرار Production (Nginx + SSL + systemd)

@@ -4,7 +4,9 @@ import asyncio
 import logging
 from typing import Any
 
+from app.utils.formatting import format_duration, utc_now
 from app.utils.message import get_chat_id, get_message_id, get_sender_id
+from app.utils.safe_math import safe_eval
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +63,111 @@ async def joke_handler(message: dict[str, Any], context: dict[str, Any], args: l
     import random
 
     await context["client"].send_message(chat_id, random.choice(jokes))
+
+
+async def uptime_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    stats = context.get("stats")
+    if not stats:
+        await context["client"].send_message(chat_id, "آمار در دسترس نیست.")
+        return
+    await context["client"].send_message(chat_id, f"Uptime: {format_duration(stats.uptime_seconds)}")
+
+
+async def stats_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    stats = context.get("stats")
+    if not stats:
+        await context["client"].send_message(chat_id, "آمار در دسترس نیست.")
+        return
+    payload = (
+        f"Updates: {stats.total_updates}\n"
+        f"Errors: {stats.total_errors}\n"
+        f"Avg dispatch: {stats.average_dispatch_ms:.2f}ms\n"
+        f"Last dispatch: {stats.last_dispatch_ms:.2f}ms\n"
+        f"Last queue size: {stats.last_queue_size}\n"
+        f"Uptime: {format_duration(stats.uptime_seconds)}"
+    )
+    await context["client"].send_message(chat_id, payload)
+
+
+async def echo_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    text = " ".join(args) if args else "متن ارسال نشده است."
+    await context["client"].send_message(chat_id, text)
+
+
+async def id_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    sender_id = get_sender_id(message)
+    message_id = get_message_id(message)
+    payload = f"Chat ID: {chat_id}\nUser ID: {sender_id}\nMessage ID: {message_id}"
+    await context["client"].send_message(chat_id, payload)
+
+
+async def time_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    await context["client"].send_message(chat_id, utc_now())
+
+
+async def calc_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    if not args:
+        await context["client"].send_message(chat_id, "استفاده: /calc 2+2")
+        return
+    expression = " ".join(args)
+    try:
+        result = safe_eval(expression)
+    except ValueError as exc:
+        await context["client"].send_message(chat_id, f"خطا: {exc}")
+        return
+    await context["client"].send_message(chat_id, f"= {result:g}")
+
+
+async def about_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    version = context.get("version", "unknown")
+    await context["client"].send_message(chat_id, f"Rubika Bot API v{version}")
+
+
+async def settings_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    repo = context["repo"]
+    settings = repo.get_group(chat_id)
+    payload = (
+        f"Anti Link: {'ON' if settings.anti_link else 'OFF'}\n"
+        f"Anti Flood: {'ON' if settings.anti_flood else 'OFF'}\n"
+        f"Anti Spam: {'ON' if settings.anti_spam else 'OFF'}\n"
+        f"Anti BadWords: {'ON' if settings.anti_badwords else 'OFF'}\n"
+        f"Anti Forward: {'ON' if settings.anti_forward else 'OFF'}\n"
+        f"Flood Limit: {settings.flood_limit}"
+    )
+    await context["client"].send_message(chat_id, payload)
+
+
+async def admins_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    repo = context["repo"]
+    total = repo.count_admins(chat_id)
+    await context["client"].send_message(chat_id, f"Admin count: {total}")
 
 
 async def antilink_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:

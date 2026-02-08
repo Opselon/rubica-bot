@@ -21,3 +21,6 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest
+      - name: Speed check
+        run: |
+          python -m app.utils.speedcheck

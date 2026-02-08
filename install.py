@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -105,6 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="ویزارد نصب بات روبیکا (محیط مجازی، وابستگی‌ها، .env و سرویس systemd)"
     )
+    parser.add_argument("--github-repo", help="آدرس مخزن گیت‌هاب برای دانلود سریع")
+    parser.add_argument("--install-path", help="مسیر نصب در حالت دانلود از گیت‌هاب")
     parser.add_argument("--token", help="توکن بات روبیکا")
     parser.add_argument("--api-base-url", default="https://botapi.rubika.ir/v3")
     parser.add_argument("--webhook-base-url", default="")
@@ -117,8 +120,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-systemd", action="store_true")
     parser.add_argument("--no-env", action="store_true")
     parser.add_argument("--force", action="store_true", help="بازنویسی فایل‌ها در صورت وجود")
+    parser.add_argument("--run", action="store_true", help="اجرای سرویس بعد از نصب")
     parser.add_argument("--non-interactive", action="store_true")
     return parser
+
+
+def bootstrap_from_github(args: argparse.Namespace) -> None:
+    if not args.github_repo:
+        return
+    dest = Path(args.install_path or "rubica-bot").expanduser().resolve()
+    if dest.exists() and any(dest.iterdir()):
+        if not args.force:
+            raise FileExistsError(f"مسیر {dest} از قبل وجود دارد.")
+        shutil.rmtree(dest)
+    run(["git", "clone", args.github_repo, str(dest)])
+    forward_args: list[str] = []
+    passthrough = {
+        "token": args.token,
+        "api_base_url": args.api_base_url,
+        "webhook_base_url": args.webhook_base_url,
+        "webhook_secret": args.webhook_secret,
+        "venv_path": args.venv_path,
+        "service_name": args.service_name,
+        "host": args.host,
+        "port": args.port,
+        "no_tests": args.no_tests,
+        "no_systemd": args.no_systemd,
+        "no_env": args.no_env,
+        "force": args.force,
+        "run": args.run,
+        "non_interactive": args.non_interactive,
+    }
+    for key, value in passthrough.items():
+        flag = f"--{key.replace('_', '-')}"
+        if isinstance(value, bool):
+            if value:
+                forward_args.append(flag)
+        elif value is not None:
+            forward_args.extend([flag, str(value)])
+    run([sys.executable, str(dest / "install.py"), *forward_args])
+    raise SystemExit(0)
 
 
 def collect_inputs(args: argparse.Namespace) -> dict[str, str | int | bool | Path]:
@@ -138,6 +179,7 @@ def collect_inputs(args: argparse.Namespace) -> dict[str, str | int | bool | Pat
             "write_env": not args.no_env,
             "write_systemd": not args.no_systemd,
             "force": args.force,
+            "run_app": args.run,
         }
 
     print("✨ ویزارد نصب بات روبیکا")
@@ -153,6 +195,7 @@ def collect_inputs(args: argparse.Namespace) -> dict[str, str | int | bool | Pat
     write_env_choice = prompt_bool("فایل .env ساخته شود؟", default=True)
     write_systemd_choice = prompt_bool("فایل systemd ساخته شود؟", default=True)
     force_choice = prompt_bool("در صورت وجود فایل‌ها بازنویسی شوند؟", default=False)
+    run_choice = prompt_bool("سرویس بعد از نصب اجرا شود؟", default=False)
     return {
         "token": token,
         "api_base_url": api_base_url,
@@ -166,12 +209,15 @@ def collect_inputs(args: argparse.Namespace) -> dict[str, str | int | bool | Pat
         "write_env": write_env_choice,
         "write_systemd": write_systemd_choice,
         "force": force_choice,
+        "run_app": run_choice,
     }
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.github_repo:
+        bootstrap_from_github(args)
     data = collect_inputs(args)
     venv_path = PROJECT_ROOT / str(data["venv_path"])
 
@@ -208,6 +254,17 @@ def main() -> None:
     print("🎉 نصب تکمیل شد.")
     print("برای اجرا:")
     print(f"{venv_path / 'bin' / 'uvicorn'} app.main:app --host {data['host']} --port {data['port']}")
+    if data.get("run_app"):
+        run(
+            [
+                str(venv_path / "bin" / "uvicorn"),
+                "app.main:app",
+                "--host",
+                str(data["host"]),
+                "--port",
+                str(data["port"]),
+            ]
+        )
 
 
 if __name__ == "__main__":

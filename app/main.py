@@ -12,17 +12,26 @@ from app.logging_config import setup_logging
 from app.services.api_client import RubikaClient
 from app.services.dispatcher import Dispatcher
 from app.services.handlers import (
+    about_handler,
+    admins_handler,
     antilink_handler,
     ban_handler,
+    calc_handler,
     coin_handler,
     delete_handler,
+    echo_handler,
     filter_handler,
     help_handler,
+    id_handler,
     joke_handler,
     ping_handler,
     roll_handler,
+    settings_handler,
     setcmd_handler,
+    stats_handler,
+    time_handler,
     unban_handler,
+    uptime_handler,
 )
 from app.services.plugins.anti_flood import AntiFloodPlugin
 from app.services.plugins.anti_link import AntiLinkPlugin
@@ -33,7 +42,9 @@ from app.services.plugins.panel import PanelPlugin
 from app.services.plugins.registry import PluginRegistry
 from app.utils.dedup import Deduplicator
 from app.utils.rate_limiter import RateLimiter
+from app.utils.stats import StatsCollector
 from app.webhook.router import build_router
+from app import __version__
 
 setup_logging(settings.log_level)
 LOGGER = logging.getLogger(__name__)
@@ -54,13 +65,23 @@ async def startup() -> None:
     ensure_schema(db_path)
     repo = Repository(db_path)
     client = RubikaClient(settings.bot_token, settings.api_base_url)
+    stats = StatsCollector()
     command_registry = CommandRegistry()
     command_registry.register(Command("help", "نمایش راهنما", help_handler))
     command_registry.register(Command("setcmd", "ثبت دستورات", setcmd_handler, admin_only=True))
     command_registry.register(Command("ping", "تست سرعت", ping_handler))
+    command_registry.register(Command("uptime", "نمایش مدت زمان اجرا", uptime_handler))
+    command_registry.register(Command("stats", "آمار پردازش", stats_handler))
+    command_registry.register(Command("echo", "تکرار متن", echo_handler))
+    command_registry.register(Command("id", "نمایش شناسه‌ها", id_handler))
+    command_registry.register(Command("time", "زمان سرور", time_handler))
+    command_registry.register(Command("calc", "محاسبه ساده", calc_handler))
     command_registry.register(Command("coin", "شیر یا خط", coin_handler))
     command_registry.register(Command("roll", "تاس", roll_handler))
     command_registry.register(Command("joke", "جوک کوتاه", joke_handler))
+    command_registry.register(Command("about", "نسخه بات", about_handler))
+    command_registry.register(Command("settings", "تنظیمات گروه", settings_handler, admin_only=True))
+    command_registry.register(Command("admins", "تعداد ادمین‌ها", admins_handler, admin_only=True))
     command_registry.register(Command("antilink", "تنظیم ضد لینک", antilink_handler, admin_only=True))
     command_registry.register(Command("filter", "مدیریت فیلتر", filter_handler, admin_only=True))
     command_registry.register(Command("del", "حذف انبوه", delete_handler, admin_only=True))
@@ -77,13 +98,15 @@ async def startup() -> None:
             PanelPlugin(),
         ]
     )
-    dispatcher = Dispatcher(registry, settings.worker_concurrency)
+    dispatcher = Dispatcher(registry, settings.worker_concurrency, stats=stats)
     await dispatcher.start()
     app.state.context = {
         "repo": repo,
         "client": client,
         "command_registry": command_registry,
         "report_anti_actions": True,
+        "stats": stats,
+        "version": __version__,
     }
     app.state.dispatcher = dispatcher
 

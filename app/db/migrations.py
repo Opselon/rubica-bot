@@ -6,7 +6,7 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 INITIAL_SCHEMA = [
@@ -70,11 +70,27 @@ INITIAL_SCHEMA = [
         PRIMARY KEY (chat_id, key)
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
 ]
 
 
 MIGRATIONS = {
     1: [],
+    2: [
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+    ],
 }
 
 
