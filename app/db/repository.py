@@ -147,24 +147,3 @@ class Repository:
                 list(rows),
             )
             conn.commit()
-
-    def set_setting(self, key: str, value: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO app_settings (key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (key, value),
-            )
-            conn.commit()
-
-    def get_setting(self, key: str) -> str | None:
-        with self._connect() as conn:
-            row = conn.execute("SELECT value FROM app_settings WHERE key = ?;", (key,)).fetchone()
-            if row is None:
-                return None
-            return str(row["value"])

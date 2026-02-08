@@ -4,7 +4,7 @@ from pydantic import BaseSettings, Field
 
 
 class Settings(BaseSettings):
-    bot_token: str | None = Field(default=None, env="RUBIKA_BOT_TOKEN")
+    bot_token: str = Field(..., env="RUBIKA_BOT_TOKEN")
     webhook_secret: str | None = Field(default=None, env="RUBIKA_WEBHOOK_SECRET")
     database_url: str = Field(default="sqlite:///data/bot.db", env="RUBIKA_DB_URL")
     api_base_url: str = Field(default="https://botapi.rubika.ir/v3", env="RUBIKA_API_BASE_URL")
