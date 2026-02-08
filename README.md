@@ -42,6 +42,27 @@ export RUBIKA_WEBHOOK_BASE_URL=https://your-domain.example
 uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
+## نصب سریع با ویزارد (UI در ترمینال)
+
+برای نصب کامل (ساخت venv، نصب وابستگی‌ها، ساخت .env، ساخت فایل systemd و اجرای تست‌ها) از ویزارد استفاده کنید:
+
+```bash
+python3 install.py
+```
+
+### دستور مستقیم لینوکس (بدون پرسش)
+
+```bash
+python3 install.py --non-interactive \
+  --token YOUR_TOKEN \
+  --webhook-base-url https://your-domain.example \
+  --service-name rubika-bot \
+  --host 0.0.0.0 \
+  --port 8080
+```
+
+> خروجی `rubika-bot.service` در ریشه پروژه ایجاد می‌شود؛ برای نصب سیستم‌عامل آن را به `/etc/systemd/system/` کپی کنید و `systemctl daemon-reload` بزنید.
+
 ## تنظیم وبهوک و Endpoint
 
 در `startup` اگر `RUBIKA_WEBHOOK_BASE_URL` تنظیم باشد، متد `updateBotEndpoints` برای ثبت آدرس‌های زیر فراخوانی می‌شود:
