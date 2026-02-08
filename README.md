@@ -37,6 +37,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 export RUBIKA_BOT_TOKEN=YOUR_TOKEN
+export RUBIKA_OWNER_ID=YOUR_OWNER_ID
 export RUBIKA_API_BASE_URL=https://botapi.rubika.ir/v3
 export RUBIKA_WEBHOOK_BASE_URL=https://your-domain.example
 
@@ -45,7 +46,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 
 ## نصب سریع با ویزارد (UI در ترمینال)
 
-برای نصب کامل (ساخت venv، نصب وابستگی‌ها، ساخت .env، ساخت فایل systemd و اجرای تست‌ها) از ویزارد استفاده کنید:
+برای نصب کامل (ساخت venv، نصب وابستگی‌ها، ساخت .env، ساخت فایل systemd، ثبت وبهوک و اجرای تست‌ها) از ویزارد استفاده کنید:
 
 ```bash
 python3 install.py
@@ -56,6 +57,7 @@ python3 install.py
 ```bash
 python3 install.py --non-interactive \
   --token YOUR_TOKEN \
+  --owner-id YOUR_OWNER_ID \
   --webhook-base-url https://your-domain.example \
   --service-name rubika-bot \
   --host 0.0.0.0 \
@@ -70,10 +72,22 @@ python3 install.py \
   --install-path /opt/rubica-bot \
   --non-interactive \
   --token YOUR_TOKEN \
+  --owner-id YOUR_OWNER_ID \
   --webhook-base-url https://your-domain.example
 ```
 
-> خروجی `rubika-bot.service` در ریشه پروژه ایجاد می‌شود؛ برای نصب سیستم‌عامل آن را به `/etc/systemd/system/` کپی کنید و `systemctl daemon-reload` بزنید.
+> خروجی `rubika-bot.service` در ریشه پروژه ایجاد می‌شود؛ در صورت نیاز با `--systemd-install` به‌صورت خودکار نصب و فعال می‌شود.
+
+### کنترل و مدیریت با rubikactl
+
+```bash
+python3 -m app.cli.rubikactl status
+python3 -m app.cli.rubikactl logs -f
+python3 -m app.cli.rubikactl configure --path /opt/rubika-bot
+python3 -m app.cli.rubikactl webhook-set --path /opt/rubika-bot
+python3 -m app.cli.rubikactl update --path /opt/rubika-bot
+python3 -m app.cli.rubikactl rollback --path /opt/rubika-bot
+```
 
 ## تنظیم وبهوک و Endpoint
 
@@ -88,6 +102,7 @@ python3 install.py \
 - **Rate Limit**: محدودیت تعداد درخواست در دقیقه.
 - **Dedup**: جلوگیری از پردازش تکراری آپدیت‌ها با TTL.
 - **API Control**: تمام درخواست‌های روبیکا از `api_call` عبور می‌کند (timeout + retry + rate-limit + logging).
+- **Log File**: خروجی‌ها به‌صورت پیش‌فرض در `/var/log/rubika-bot/app.log` ذخیره می‌شود (قابل تغییر با `RUBIKA_LOG_FILE`).
 
 ## معماری پلاگین‌ها
 

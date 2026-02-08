@@ -9,9 +9,11 @@ def test_render_env_includes_required_values() -> None:
         api_base_url="https://api.example",
         webhook_base_url="https://webhook.example",
         webhook_secret="secret",
+        owner_id="42",
     )
     assert "RUBIKA_BOT_TOKEN=token-123" in output
     assert "RUBIKA_API_BASE_URL=https://api.example" in output
+    assert "RUBIKA_OWNER_ID=42" in output
     assert "RUBIKA_WEBHOOK_BASE_URL=https://webhook.example" in output
     assert "RUBIKA_WEBHOOK_SECRET=secret" in output
 

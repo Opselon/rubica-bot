@@ -53,7 +53,8 @@ class CommandsPlugin(Plugin):
         sender_id = get_sender_id(message)
         if command.admin_only and chat_id and sender_id:
             repo = context["repo"]
-            if not repo.is_admin(chat_id, sender_id):
+            owner_id = context.get("owner_id")
+            if sender_id != owner_id and not repo.is_admin(chat_id, sender_id):
                 client = context["client"]
                 await client.send_message(chat_id, "این دستور فقط برای ادمین‌هاست.")
                 return True
