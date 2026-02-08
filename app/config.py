@@ -5,6 +5,7 @@ from pydantic import BaseSettings, Field
 
 class Settings(BaseSettings):
     bot_token: str = Field(..., env="RUBIKA_BOT_TOKEN")
+    owner_id: str | None = Field(default=None, env="RUBIKA_OWNER_ID")
     webhook_secret: str | None = Field(default=None, env="RUBIKA_WEBHOOK_SECRET")
     database_url: str = Field(default="sqlite:///data/bot.db", env="RUBIKA_DB_URL")
     api_base_url: str = Field(default="https://botapi.rubika.ir/v3", env="RUBIKA_API_BASE_URL")
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     api_rate_limit_per_second: int = Field(default=20, env="RUBIKA_API_RATE_LIMIT_PER_SECOND")
     webhook_base_url: str | None = Field(default=None, env="RUBIKA_WEBHOOK_BASE_URL")
     log_level: str = Field(default="INFO", env="RUBIKA_LOG_LEVEL")
+    log_file: str = Field(default="/var/log/rubika-bot/app.log", env="RUBIKA_LOG_FILE")
     worker_concurrency: int = Field(default=4, env="RUBIKA_WORKER_CONCURRENCY")
     rate_limit_per_minute: int = Field(default=120, env="RUBIKA_RATE_LIMIT_PER_MINUTE")
     dedup_ttl_seconds: int = Field(default=120, env="RUBIKA_DEDUP_TTL_SECONDS")

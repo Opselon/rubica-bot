@@ -47,7 +47,7 @@ from app.utils.stats import StatsCollector
 from app.webhook.router import build_router
 from app import __version__
 
-setup_logging(settings.log_level)
+setup_logging(settings.log_level, settings.log_file)
 LOGGER = logging.getLogger(__name__)
 
 app = FastAPI(title="Rubika Bot API v3")
@@ -116,6 +116,7 @@ async def startup() -> None:
         "report_anti_actions": True,
         "stats": stats,
         "version": __version__,
+        "owner_id": settings.owner_id,
     }
     app.state.dispatcher = dispatcher
 
