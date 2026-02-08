@@ -156,6 +156,33 @@ class Repository:
             )
             conn.commit()
 
+    def save_incoming_update(
+        self,
+        job_id: str,
+        received_at: float,
+        chat_id: str | None,
+        message_id: str | None,
+        sender_id: str | None,
+        update_type: str | None,
+        text: str | None,
+        raw_payload: str | None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO incoming_updates (
+                    job_id, received_at, chat_id, message_id, sender_id, update_type, text, raw_payload
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (job_id, received_at, chat_id, message_id, sender_id, update_type, text, raw_payload),
+            )
+            conn.commit()
+
+    def fetch_latest_message(self) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM messages ORDER BY id DESC LIMIT 1;").fetchone()
+
     def set_setting(self, key: str, value: str) -> None:
         with self._connect() as conn:
             conn.execute(

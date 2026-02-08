@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import time
 
-from app.services.dispatcher import Dispatcher
+from app.core.queue import Job
+from app.core.queue import JobQueue
+from app.core.worker import WorkerPool
 from app.services.plugins.base import Plugin
 from app.services.plugins.registry import PluginRegistry
+from app.utils.dedup import Deduplicator
 from app.utils.stats import StatsCollector
 
 
@@ -19,14 +22,20 @@ class _NoopPlugin(Plugin):
 async def run_speed_check(samples: int = 200) -> dict[str, float]:
     stats = StatsCollector()
     registry = PluginRegistry([_NoopPlugin()])
-    dispatcher = Dispatcher(registry, concurrency=4, stats=stats)
-    await dispatcher.start()
+    queue = JobQueue(max_size=1000, deduplicator=Deduplicator(60), stats=stats)
+
+    async def _process(job: Job) -> None:
+        await registry.dispatch(job.raw_payload or {}, {"stats": stats})
+
+    worker = WorkerPool(queue, _process, concurrency=4, stats=stats)
+    await worker.start()
     start = time.perf_counter()
     for idx in range(samples):
-        await dispatcher.enqueue({"update_id": idx}, {"stats": stats})
-    await dispatcher.queue.join()
+        job = Job.build(str(idx), chat_id=None, message_id=None, sender_id=None, update_type=None, text=None)
+        await queue.enqueue(job)
+    await queue.join()
     elapsed = time.perf_counter() - start
-    await dispatcher.stop()
+    await worker.stop()
     return {
         "samples": float(samples),
         "elapsed_s": elapsed,
