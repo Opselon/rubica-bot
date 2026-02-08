@@ -6,9 +6,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 import httpx
+import sqlite3
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -21,6 +23,13 @@ from app.cli.doctor_utils import mask_secret, parse_sqlite_path
 
 app = typer.Typer(help="Rubika Bot control CLI")
 console = Console()
+db_app = typer.Typer(help="SQLite maintenance commands")
+fix_app = typer.Typer(help="Fix common issues")
+queue_app = typer.Typer(help="Queue utilities")
+
+app.add_typer(db_app, name="db")
+app.add_typer(fix_app, name="fix")
+app.add_typer(queue_app, name="queue")
 
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -37,6 +46,24 @@ def read_env(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         data[key.strip()] = value.strip()
     return data
+
+
+def _open_db(db_url: str) -> tuple[str, sqlite3.Connection]:
+    db_path = parse_sqlite_path(db_url)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return db_path, conn
+
+
+def _db_record_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in ["incoming_updates", "messages", "admins", "filters"]:
+        try:
+            row = conn.execute(f"SELECT COUNT(1) AS total FROM {table};").fetchone()
+            counts[table] = int(row["total"] if row else 0)
+        except sqlite3.Error:
+            counts[table] = 0
+    return counts
 
 
 def prompt_value(label: str, default: str | None = None, required: bool = False) -> str:
@@ -488,6 +515,15 @@ def doctor(
                     json.dumps(data.get("queue", {}), ensure_ascii=False),
                 )
             )
+            queue_data = data.get("queue", {})
+            if queue_data.get("size", 0) > 500:
+                console.print(
+                    _warning_result(
+                        "Queue Backlog",
+                        json.dumps(queue_data, ensure_ascii=False),
+                        "Consider increasing workers or enabling priority queues",
+                    )
+                )
             workers = data.get("workers", [])
             console.print(
                 _check_result(
@@ -519,11 +555,11 @@ def doctor(
         else:
             size_mb = Path(db_path).stat().st_size / (1024**2)
             console.print(_check_result(True, "Database File", f"{db_path} ({size_mb:.2f} MB)"))
-            import sqlite3
-
             with sqlite3.connect(db_path) as conn:
                 quick_check = conn.execute("PRAGMA quick_check;").fetchone()
                 tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
+                journal = conn.execute("PRAGMA journal_mode;").fetchone()
+                counts = _db_record_counts(conn)
                 console.print(
                     _check_result(
                         quick_check and quick_check[0] == "ok",
@@ -534,16 +570,202 @@ def doctor(
                 )
                 console.print(
                     _check_result(
+                        journal and journal[0].lower() == "wal",
+                        "WAL mode",
+                        str(journal[0] if journal else "unknown"),
+                        "Run: rubikactl fix db",
+                    )
+                )
+                console.print(
+                    _check_result(
                         True,
                         "Tables",
                         ", ".join(row[0] for row in tables),
                     )
                 )
+                console.print(
+                    _check_result(
+                        True,
+                        "Record counts",
+                        json.dumps(counts, ensure_ascii=False),
+                    )
+                )
                 last_message = conn.execute("SELECT * FROM messages ORDER BY id DESC LIMIT 1;").fetchone()
                 detail = dict(last_message) if last_message else {}
                 console.print(_check_result(True, "Last Message", json.dumps(detail, ensure_ascii=False)))
+            retention_hours = int(env_data.get("RUBIKA_INCOMING_UPDATES_RETENTION_HOURS", "48") or 48)
+            retention_enabled = env_data.get("RUBIKA_INCOMING_UPDATES_ENABLED", "true").lower() != "false"
+            console.print(
+                _check_result(
+                    retention_enabled,
+                    "Retention",
+                    f"incoming_updates {retention_hours}h",
+                    "Set RUBIKA_INCOMING_UPDATES_RETENTION_HOURS and enable janitor",
+                )
+            )
+            if size_mb > 500:
+                console.print(
+                    _warning_result(
+                        "Database Size",
+                        f"{size_mb:.2f} MB",
+                        "Run: rubikactl db cleanup --days 2 --keep-per-chat 10000",
+                    )
+                )
     except Exception as exc:  # noqa: BLE001
         console.print(_check_result(False, "SQLite", str(exc), "Check DB permissions or corruption"))
+
+
+@db_app.command("stats")
+def db_stats(path: Path = typer.Option(Path("."), "--path")) -> None:
+    env = read_env(path / ".env")
+    db_url = env.get("RUBIKA_DB_URL", "sqlite:///data/bot.db")
+    db_path, conn = _open_db(db_url)
+    try:
+        size_mb = Path(db_path).stat().st_size / (1024**2) if Path(db_path).exists() else 0.0
+        counts = _db_record_counts(conn)
+        console.print(_check_result(True, "DB Size", f"{db_path} ({size_mb:.2f} MB)"))
+        console.print(_check_result(True, "Record counts", json.dumps(counts, ensure_ascii=False)))
+    finally:
+        conn.close()
+
+
+@db_app.command("cleanup")
+def db_cleanup(
+    path: Path = typer.Option(Path("."), "--path"),
+    days: int = typer.Option(2, "--days"),
+    keep_per_chat: int = typer.Option(10000, "--keep-per-chat"),
+) -> None:
+    env = read_env(path / ".env")
+    db_url = env.get("RUBIKA_DB_URL", "sqlite:///data/bot.db")
+    _, conn = _open_db(db_url)
+    try:
+        cutoff = time.time() - days * 86400
+        cur_updates = conn.execute("DELETE FROM incoming_updates WHERE received_at < ?;", (cutoff,))
+        total_deleted = 0
+        chat_rows = conn.execute("SELECT DISTINCT chat_id FROM messages;").fetchall()
+        for row in chat_rows:
+            chat_id = row["chat_id"]
+            cursor = conn.execute(
+                """
+                DELETE FROM messages
+                WHERE chat_id = ?
+                AND id NOT IN (
+                    SELECT id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
+                );
+                """,
+                (chat_id, chat_id, keep_per_chat),
+            )
+            total_deleted += cursor.rowcount
+        conn.commit()
+        console.print(
+            _check_result(
+                True,
+                "Cleanup",
+                f"incoming_updates deleted: {cur_updates.rowcount}, messages trimmed: {total_deleted}",
+            )
+        )
+    finally:
+        conn.close()
+
+
+@db_app.command("vacuum")
+def db_vacuum(path: Path = typer.Option(Path("."), "--path")) -> None:
+    env = read_env(path / ".env")
+    db_url = env.get("RUBIKA_DB_URL", "sqlite:///data/bot.db")
+    _, conn = _open_db(db_url)
+    try:
+        console.print(_warning_result("Vacuum", "Running VACUUM may lock the DB."))
+        conn.execute("VACUUM;")
+        console.print(_check_result(True, "Vacuum", "Completed"))
+    finally:
+        conn.close()
+
+
+@db_app.command("optimize")
+def db_optimize(path: Path = typer.Option(Path("."), "--path")) -> None:
+    env = read_env(path / ".env")
+    db_url = env.get("RUBIKA_DB_URL", "sqlite:///data/bot.db")
+    _, conn = _open_db(db_url)
+    try:
+        conn.execute("PRAGMA optimize;")
+        console.print(_check_result(True, "Optimize", "Completed"))
+    finally:
+        conn.close()
+
+
+@fix_app.command("db")
+def fix_db(path: Path = typer.Option(Path("."), "--path")) -> None:
+    env = read_env(path / ".env")
+    db_url = env.get("RUBIKA_DB_URL", "sqlite:///data/bot.db")
+    _, conn = _open_db(db_url)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
+        conn.execute("PRAGMA cache_size=-20000;")
+        conn.execute("PRAGMA busy_timeout=3000;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_incoming_updates_received ON incoming_updates (received_at);"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages (chat_id, id DESC);")
+        conn.commit()
+        console.print(_check_result(True, "Fix DB", "Pragmas and indexes applied"))
+    finally:
+        conn.close()
+
+
+@fix_app.command("nginx")
+def fix_nginx() -> None:
+    nginx_test = run(["nginx", "-t"], check=False)
+    if nginx_test.returncode != 0:
+        console.print(_check_result(False, "Nginx Config", nginx_test.stderr.strip(), "Fix nginx config syntax"))
+        return
+    run(["systemctl", "reload", "nginx"])
+    console.print(_check_result(True, "Nginx", "Reloaded"))
+
+
+@fix_app.command("service")
+def fix_service(service: str = typer.Option("rubika-bot", "--service")) -> None:
+    run(["systemctl", "restart", service])
+    console.print(_check_result(True, "Service", f"Restarted {service}"))
+
+
+@queue_app.command("status")
+def queue_status(port: int = typer.Option(8080, "--port")) -> None:
+    try:
+        response = httpx.get(f"http://127.0.0.1:{port}/health/queue", timeout=5)
+        if response.status_code == 200:
+            console.print(_check_result(True, "Queue Status", response.text))
+            return
+        console.print(_check_result(False, "Queue Status", response.text, "Check app service health"))
+    except httpx.RequestError as exc:
+        console.print(_warning_result("Queue Status", str(exc), "Ensure app is running"))
+
+
+@queue_app.command("top")
+def queue_top(port: int = typer.Option(8080, "--port")) -> None:
+    try:
+        response = httpx.get(f"http://127.0.0.1:{port}/health/queue", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            console.print(_check_result(True, "Queue Snapshot", json.dumps(data, ensure_ascii=False)))
+            return
+        console.print(_check_result(False, "Queue Snapshot", response.text, "Check app service health"))
+    except httpx.RequestError as exc:
+        console.print(_warning_result("Queue Snapshot", str(exc), "Ensure app is running"))
+
+
+@queue_app.command("drain")
+def queue_drain(port: int = typer.Option(8080, "--port")) -> None:
+    try:
+        response = httpx.post(f"http://127.0.0.1:{port}/health/queue/drain", timeout=10)
+        if response.status_code == 200:
+            console.print(_check_result(True, "Queue Drain", response.text))
+            return
+        console.print(_check_result(False, "Queue Drain", response.text, "Check app service health"))
+    except httpx.RequestError as exc:
+        console.print(_warning_result("Queue Drain", str(exc), "Ensure app is running"))
 
 
 if __name__ == "__main__":

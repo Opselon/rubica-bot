@@ -60,7 +60,7 @@ class WorkerPool:
         while True:
             job = await self.queue.get()
             if job is None:
-                self.queue.task_done()
+                self.queue.task_done(job)
                 status.alive = False
                 break
             start = time.perf_counter()
@@ -78,4 +78,4 @@ class WorkerPool:
                 if self.stats:
                     elapsed_ms = (time.perf_counter() - start) * 1000
                     self.stats.record_dispatch(elapsed_ms, error=error)
-                self.queue.task_done()
+                self.queue.task_done(job)

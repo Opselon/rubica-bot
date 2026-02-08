@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     queue_full_policy: str = Field(default="reject", env="RUBIKA_QUEUE_FULL_POLICY")
     rate_limit_per_minute: int = Field(default=120, env="RUBIKA_RATE_LIMIT_PER_MINUTE")
     dedup_ttl_seconds: int = Field(default=120, env="RUBIKA_DEDUP_TTL_SECONDS")
+    settings_cache_ttl_seconds: int = Field(default=90, env="RUBIKA_SETTINGS_CACHE_TTL_SECONDS")
+    settings_cache_size: int = Field(default=1024, env="RUBIKA_SETTINGS_CACHE_SIZE")
+    incoming_updates_enabled: bool = Field(default=True, env="RUBIKA_INCOMING_UPDATES_ENABLED")
+    incoming_updates_store_raw: bool = Field(default=False, env="RUBIKA_INCOMING_UPDATES_STORE_RAW")
+    incoming_updates_retention_hours: int = Field(default=48, env="RUBIKA_INCOMING_UPDATES_RETENTION_HOURS")
+    messages_keep_per_chat: int = Field(default=10000, env="RUBIKA_MESSAGES_KEEP_PER_CHAT")
     register_webhook: bool = Field(default=True, env="RUBIKA_REGISTER_WEBHOOK")
     panel_enabled: bool = Field(default=True, env="RUBIKA_PANEL_ENABLED")
 
