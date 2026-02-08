@@ -225,16 +225,36 @@ async def delete_handler(message: dict[str, Any], context: dict[str, Any], args:
         return
     repo = context["repo"]
     client = context["client"]
-    limit = int(args[0]) if args else 100
-    limit = min(limit, 10000)
+    limit = 100
+    if args:
+        try:
+            limit = int(args[0])
+        except ValueError:
+            await client.send_message(chat_id, "عدد نامعتبر است. مثال: /del 100")
+            return
+    limit = max(0, min(limit, 10000))
+    if limit == 0:
+        await client.send_message(chat_id, "هیچ پیامی برای حذف انتخاب نشد.")
+        return
     message_ids = repo.fetch_recent_message_ids(chat_id, limit)
+    if not message_ids:
+        await client.send_message(chat_id, "پیامی برای حذف پیدا نشد.")
+        return
+    deleted = 0
+    failed = 0
     for idx, message_id in enumerate(message_ids, start=1):
         try:
-            await client.delete_message(chat_id, message_id)
+            result = await client.delete_message(chat_id, message_id)
+            if result.get("ok", True):
+                deleted += 1
+            else:
+                failed += 1
         except Exception:  # noqa: BLE001
             LOGGER.exception("Failed to delete message %s", message_id)
-        if idx % 20 == 0:
-            await asyncio.sleep(0.2)
+            failed += 1
+        if idx % 25 == 0:
+            await asyncio.sleep(0.3)
+    await client.send_message(chat_id, f"حذف شد: {deleted} | ناموفق: {failed}")
 
 
 async def ban_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:

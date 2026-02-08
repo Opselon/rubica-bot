@@ -1,4 +1,4 @@
-import pytest
+import asyncio
 
 from app.services.handlers import models_handler
 from app.utils.models_doc import MODELS_DOC
@@ -13,13 +13,12 @@ class DummyClient:
         return {"ok": True}
 
 
-@pytest.mark.asyncio
-async def test_models_handler_sends_full_doc():
+def test_models_handler_sends_full_doc():
     client = DummyClient()
     context = {"client": client}
     message = {"chat_id": "123"}
 
-    await models_handler(message, context, [])
+    asyncio.run(models_handler(message, context, []))
 
     assert client.messages == [("123", MODELS_DOC, None)]
 
