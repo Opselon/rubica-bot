@@ -42,6 +42,12 @@ def logs(args: argparse.Namespace) -> None:
     run(["journalctl", "-u", args.service, "-n", "200", "--no-pager"])
 
 
+def check(args: argparse.Namespace) -> None:
+    run([args.python, "-m", "pip", "install", "-r", "requirements.txt"])
+    run([args.python, "-m", "pytest", "tests"])
+    run([args.python, "-m", "app.utils.speedcheck"])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="botctl")
     parser.add_argument("--service", default="rubika-bot")
@@ -62,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     logs_parser = sub.add_parser("logs")
     logs_parser.set_defaults(func=logs)
+
+    check_parser = sub.add_parser("check")
+    check_parser.add_argument("--python", default="python3")
+    check_parser.set_defaults(func=check)
 
     return parser
 

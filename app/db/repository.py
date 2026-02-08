@@ -94,6 +94,14 @@ class Repository:
             ).fetchone()
             return row is not None
 
+    def count_admins(self, chat_id: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(1) AS total FROM admins WHERE chat_id = ?;",
+                (chat_id,),
+            ).fetchone()
+            return int(row["total"] if row else 0)
+
     def add_filter(self, chat_id: str, word: str, is_whitelist: bool, regex_enabled: bool) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -147,3 +155,22 @@ class Repository:
                 list(rows),
             )
             conn.commit()
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value),
+            )
+            conn.commit()
+
+    def get_setting(self, key: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = ?;", (key,)).fetchone()
+            return str(row["value"]) if row else None
