@@ -24,6 +24,7 @@ from app.services.handlers import (
     help_handler,
     id_handler,
     joke_handler,
+    models_handler,
     ping_handler,
     roll_handler,
     settings_handler,
@@ -79,6 +80,7 @@ async def startup() -> None:
     command_registry.register(Command("coin", "شیر یا خط", coin_handler))
     command_registry.register(Command("roll", "تاس", roll_handler))
     command_registry.register(Command("joke", "جوک کوتاه", joke_handler))
+    command_registry.register(Command("models", "مدل ها", models_handler))
     command_registry.register(Command("about", "نسخه بات", about_handler))
     command_registry.register(Command("settings", "تنظیمات گروه", settings_handler, admin_only=True))
     command_registry.register(Command("admins", "تعداد ادمین‌ها", admins_handler, admin_only=True))

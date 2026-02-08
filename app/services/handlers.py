@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from app.utils.formatting import format_duration, utc_now
+from app.utils.models_doc import MODELS_DOC
 from app.utils.message import get_chat_id, get_message_id, get_sender_id
 from app.utils.safe_math import safe_eval
 
@@ -142,6 +143,13 @@ async def about_handler(message: dict[str, Any], context: dict[str, Any], args: 
         return
     version = context.get("version", "unknown")
     await context["client"].send_message(chat_id, f"Rubika Bot API v{version}")
+
+
+async def models_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
+    chat_id = get_chat_id(message)
+    if not chat_id:
+        return
+    await context["client"].send_message(chat_id, MODELS_DOC)
 
 
 async def settings_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
