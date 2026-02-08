@@ -18,7 +18,5 @@ class MessageLoggingPlugin(Plugin):
         message_id = get_message_id(message)
         if not chat_id or not message_id:
             return False
-        chat = message.get("chat") or {}
-        repo.upsert_group(chat_id, chat.get("title"))
         repo.save_message(chat_id, message_id, get_sender_id(message), get_text(message))
         return False

@@ -73,26 +73,6 @@ async def antilink_handler(message: dict[str, Any], context: dict[str, Any], arg
     await context["client"].send_message(chat_id, f"Anti Link {'ON' if value else 'OFF'}")
 
 
-async def antiflood_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
-    chat_id = get_chat_id(message)
-    if not chat_id or not args:
-        return
-    repo = context["repo"]
-    value = args[0].lower() == "on"
-    repo.set_group_flag(chat_id, "anti_flood", value)
-    await context["client"].send_message(chat_id, f"Anti Flood {'ON' if value else 'OFF'}")
-
-
-async def flood_limit_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
-    chat_id = get_chat_id(message)
-    if not chat_id or not args:
-        return
-    limit = max(2, min(int(args[0]), 50))
-    repo = context["repo"]
-    repo.set_group_flag(chat_id, "flood_limit", limit)
-    await context["client"].send_message(chat_id, f"Flood limit روی {limit} تنظیم شد.")
-
-
 async def filter_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
     chat_id = get_chat_id(message)
     if not chat_id:
@@ -163,29 +143,3 @@ async def unban_handler(message: dict[str, Any], context: dict[str, Any], args: 
     client = context["client"]
     if args:
         await client.unban_chat_member(chat_id, args[0])
-
-
-async def admin_handler(message: dict[str, Any], context: dict[str, Any], args: list[str]) -> None:
-    chat_id = get_chat_id(message)
-    if not chat_id or not args:
-        return
-    repo = context["repo"]
-    action = args[0].lower()
-    if action == "list":
-        admins = repo.list_admins(chat_id)
-        if not admins:
-            await context["client"].send_message(chat_id, "ادمینی ثبت نشده است.")
-            return
-        text = "\n".join([f"{user_id} ({role})" for user_id, role in admins])
-        await context["client"].send_message(chat_id, text)
-        return
-    if len(args) < 2:
-        await context["client"].send_message(chat_id, "استفاده: /admin add|del|list <user_id>")
-        return
-    user_id = args[1]
-    if action == "add":
-        repo.add_admin(chat_id, user_id)
-        await context["client"].send_message(chat_id, f"{user_id} ادمین شد.")
-    elif action == "del":
-        repo.remove_admin(chat_id, user_id)
-        await context["client"].send_message(chat_id, f"{user_id} از ادمین‌ها حذف شد.")

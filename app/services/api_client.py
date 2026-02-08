@@ -39,17 +39,13 @@ class RubikaClient:
         return await self.request("unbanChatMember", {"chat_id": chat_id, "user_id": user_id})
 
     async def set_commands(self, commands: list[dict[str, str]]) -> dict[str, Any]:
-        return await self.request("setCommands", {"bot_commands": commands})
+        return await self.request("setCommands", {"commands": commands})
 
     async def update_bot_endpoint(self, url: str) -> dict[str, Any]:
         return await self.request("updateBotEndpoint", {"url": url})
 
-    async def update_bot_endpoints(self, endpoints: list[dict[str, str]] | list[str]) -> dict[str, Any]:
-        if endpoints and isinstance(endpoints[0], str):
-            payload = {"endpoints": [{"url": url} for url in endpoints]}  # type: ignore[list-item]
-        else:
-            payload = {"endpoints": endpoints}
-        return await self.request("updateBotEndpoints", payload)
+    async def update_bot_endpoints(self, urls: list[str]) -> dict[str, Any]:
+        return await self.request("updateBotEndpoints", {"urls": urls})
 
     async def close(self) -> None:
         await self._client.aclose()

@@ -66,12 +66,11 @@ class Repository:
                 flood_limit=int(row["flood_limit"]),
             )
 
-    def set_group_flag(self, chat_id: str, key: str, value: bool | int) -> None:
-        stored_value = int(value) if isinstance(value, bool) else value
+    def set_group_flag(self, chat_id: str, key: str, value: bool) -> None:
         with self._connect() as conn:
             conn.execute(
                 f"UPDATE groups SET {key} = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?;",
-                (stored_value, chat_id),
+                (1 if value else 0, chat_id),
             )
             conn.commit()
 
@@ -87,11 +86,6 @@ class Repository:
             )
             conn.commit()
 
-    def remove_admin(self, chat_id: str, user_id: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM admins WHERE chat_id = ? AND user_id = ?;", (chat_id, user_id))
-            conn.commit()
-
     def is_admin(self, chat_id: str, user_id: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
@@ -99,19 +93,6 @@ class Repository:
                 (chat_id, user_id),
             ).fetchone()
             return row is not None
-
-    def has_admins(self, chat_id: str) -> bool:
-        with self._connect() as conn:
-            row = conn.execute("SELECT 1 FROM admins WHERE chat_id = ? LIMIT 1;", (chat_id,)).fetchone()
-            return row is not None
-
-    def list_admins(self, chat_id: str) -> list[tuple[str, str]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT user_id, role FROM admins WHERE chat_id = ? ORDER BY user_id;",
-                (chat_id,),
-            ).fetchall()
-        return [(row["user_id"], row["role"]) for row in rows]
 
     def add_filter(self, chat_id: str, word: str, is_whitelist: bool, regex_enabled: bool) -> None:
         with self._connect() as conn:
@@ -166,24 +147,3 @@ class Repository:
                 list(rows),
             )
             conn.commit()
-
-    def set_setting(self, key: str, value: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO app_settings (key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (key, value),
-            )
-            conn.commit()
-
-    def get_setting(self, key: str) -> str | None:
-        with self._connect() as conn:
-            row = conn.execute("SELECT value FROM app_settings WHERE key = ?;", (key,)).fetchone()
-            if row is None:
-                return None
-            return str(row["value"])

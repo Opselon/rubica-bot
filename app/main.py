@@ -13,13 +13,10 @@ from app.services.api_client import RubikaClient
 from app.services.dispatcher import Dispatcher
 from app.services.handlers import (
     antilink_handler,
-    antiflood_handler,
-    admin_handler,
     ban_handler,
     coin_handler,
     delete_handler,
     filter_handler,
-    flood_limit_handler,
     help_handler,
     joke_handler,
     ping_handler,
@@ -56,14 +53,7 @@ async def startup() -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     ensure_schema(db_path)
     repo = Repository(db_path)
-    bot_token = settings.bot_token or repo.get_setting("bot_token")
-    if not bot_token:
-        raise RuntimeError("Bot token is missing. Set RUBIKA_BOT_TOKEN or use botctl setup.")
-    api_base_url = settings.api_base_url or repo.get_setting("api_base_url") or "https://botapi.rubika.ir/v3"
-    webhook_base_url = settings.webhook_base_url or repo.get_setting("webhook_base_url")
-    webhook_secret = settings.webhook_secret or repo.get_setting("webhook_secret")
-
-    client = RubikaClient(bot_token, api_base_url)
+    client = RubikaClient(settings.bot_token, settings.api_base_url)
     command_registry = CommandRegistry()
     command_registry.register(Command("help", "نمایش راهنما", help_handler))
     command_registry.register(Command("setcmd", "ثبت دستورات", setcmd_handler, admin_only=True))
@@ -72,13 +62,10 @@ async def startup() -> None:
     command_registry.register(Command("roll", "تاس", roll_handler))
     command_registry.register(Command("joke", "جوک کوتاه", joke_handler))
     command_registry.register(Command("antilink", "تنظیم ضد لینک", antilink_handler, admin_only=True))
-    command_registry.register(Command("antiflood", "تنظیم ضد فلود", antiflood_handler, admin_only=True))
-    command_registry.register(Command("flood", "حداکثر پیام در بازه", flood_limit_handler, admin_only=True))
     command_registry.register(Command("filter", "مدیریت فیلتر", filter_handler, admin_only=True))
     command_registry.register(Command("del", "حذف انبوه", delete_handler, admin_only=True))
     command_registry.register(Command("ban", "بن کاربر", ban_handler, admin_only=True))
     command_registry.register(Command("unban", "رفع بن", unban_handler, admin_only=True))
-    command_registry.register(Command("admin", "مدیریت ادمین‌ها", admin_handler, admin_only=True))
 
     registry = PluginRegistry(
         [
@@ -97,16 +84,15 @@ async def startup() -> None:
         "client": client,
         "command_registry": command_registry,
         "report_anti_actions": True,
-        "webhook_secret": webhook_secret,
     }
     app.state.dispatcher = dispatcher
 
-    if settings.register_webhook and webhook_base_url:
-        webhook_base = webhook_base_url.rstrip("/")
+    if settings.register_webhook and settings.webhook_base_url:
+        webhook_base = settings.webhook_base_url.rstrip("/")
         await client.update_bot_endpoints(
             [
-                {"url": f"{webhook_base}/receiveUpdate", "type": "ReceiveUpdate"},
-                {"url": f"{webhook_base}/receiveInlineMessage", "type": "ReceiveInlineMessage"},
+                f"{webhook_base}/receiveUpdate",
+                f"{webhook_base}/receiveInlineMessage",
             ]
         )
         await client.set_commands(command_registry.list_commands())
