@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from app.services.plugins.anti_flood import AntiFloodPlugin
 from app.services.plugins.anti_link import AntiLinkPlugin
 from app.services.plugins.commands import Command, CommandRegistry, CommandsPlugin
 from app.services.plugins.filters import FilterWordsPlugin
+from app.services.plugins.incoming_snapshot import IncomingSnapshotPlugin
 from app.services.plugins.logging import MessageLoggingPlugin
 from app.services.plugins.panel import PanelPlugin
 from app.services.plugins.registry import PluginRegistry
@@ -54,6 +56,18 @@ LOGGER = logging.getLogger(__name__)
 app = FastAPI(title="Rubika Bot API v3")
 
 
+async def _run_db_janitor(repo: Repository) -> None:
+    interval_seconds = 600
+    while True:
+        try:
+            if settings.incoming_updates_enabled:
+                repo.cleanup_incoming_updates(settings.incoming_updates_retention_hours * 3600)
+            repo.trim_messages_per_chat(settings.messages_keep_per_chat)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Database janitor failed")
+        await asyncio.sleep(interval_seconds)
+
+
 def _resolve_db_path(url: str) -> str:
     if url.startswith("sqlite:///"):
         return url.replace("sqlite:///", "", 1)
@@ -65,7 +79,11 @@ async def startup() -> None:
     db_path = _resolve_db_path(settings.database_url)
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     ensure_schema(db_path)
-    repo = Repository(db_path)
+    repo = Repository(
+        db_path,
+        cache_size=settings.settings_cache_size,
+        cache_ttl_seconds=settings.settings_cache_ttl_seconds,
+    )
     client = RubikaClient(
         settings.bot_token,
         settings.api_base_url,
@@ -100,6 +118,7 @@ async def startup() -> None:
 
     registry = PluginRegistry(
         [
+            IncomingSnapshotPlugin(),
             MessageLoggingPlugin(),
             AntiLinkPlugin(),
             AntiFloodPlugin(),
@@ -129,9 +148,11 @@ async def startup() -> None:
         "stats": stats,
         "version": __version__,
         "owner_id": settings.owner_id,
+        "settings": settings,
     }
     app.state.queue = queue
     app.state.worker = worker
+    app.state.janitor_task = asyncio.create_task(_run_db_janitor(repo))
 
     if settings.register_webhook and settings.webhook_base_url:
         webhook_base = settings.webhook_base_url.rstrip("/")
@@ -148,6 +169,10 @@ async def startup() -> None:
 async def shutdown() -> None:
     worker = app.state.worker
     await worker.stop()
+    janitor_task = app.state.janitor_task
+    janitor_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await janitor_task
     await app.state.context["client"].close()
 
 
@@ -170,9 +195,12 @@ async def health_queue() -> dict[str, object]:
     queue = app.state.queue
     worker = app.state.worker
     stats = app.state.context["stats"]
+    sizes = queue.size_by_priority()
     return {
         "queue": {
             "size": queue.size(),
+            "high_size": sizes["high"],
+            "normal_size": sizes["normal"],
             "max_size": queue.max_size,
             "total_enqueued": stats.total_enqueued,
             "total_dropped": stats.total_dropped,
@@ -196,3 +224,10 @@ async def health_queue() -> dict[str, object]:
             "last_dispatch_ms": stats.last_dispatch_ms,
         },
     }
+
+
+@app.post("/health/queue/drain")
+async def drain_queue() -> dict[str, object]:
+    queue = app.state.queue
+    drained = await queue.drain()
+    return {"drained": drained}

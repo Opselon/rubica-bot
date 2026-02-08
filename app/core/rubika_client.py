@@ -4,8 +4,8 @@ import asyncio
 import logging
 import random
 import time
-from collections import deque
-from typing import Any, Deque
+from collections import defaultdict
+from typing import Any
 
 import httpx
 
@@ -13,21 +13,25 @@ LOGGER = logging.getLogger(__name__)
 
 
 class ApiRateLimiter:
-    def __init__(self, max_requests: int, window_seconds: float = 1.0) -> None:
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self._events: Deque[float] = deque()
+    def __init__(self, rate_per_second: float, burst: int) -> None:
+        self.rate_per_second = max(rate_per_second, 0.1)
+        self.capacity = max(burst, 1)
+        self._tokens = float(self.capacity)
+        self._last_refill = time.monotonic()
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
         async with self._lock:
             now = time.monotonic()
-            while self._events and now - self._events[0] > self.window_seconds:
-                self._events.popleft()
-            if len(self._events) >= self.max_requests:
-                sleep_for = self.window_seconds - (now - self._events[0])
-                await asyncio.sleep(max(sleep_for, 0))
-            self._events.append(time.monotonic())
+            elapsed = now - self._last_refill
+            self._tokens = min(self.capacity, self._tokens + elapsed * self.rate_per_second)
+            self._last_refill = now
+            if self._tokens < 1.0:
+                wait_for = (1.0 - self._tokens) / self.rate_per_second
+                await asyncio.sleep(max(wait_for, 0))
+                self._tokens = 0.0
+                self._last_refill = time.monotonic()
+            self._tokens -= 1.0
 
 
 class RubikaClient:
@@ -47,14 +51,16 @@ class RubikaClient:
         self.retry_attempts = retry_attempts
         self.retry_backoff = retry_backoff
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
-        self._rate_limiter = ApiRateLimiter(max(rate_limit_per_second, 1))
+        self._rate_limiters: dict[str, ApiRateLimiter] = defaultdict(
+            lambda: ApiRateLimiter(rate_per_second=max(rate_limit_per_second, 1), burst=5)
+        )
 
     async def api_call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}/{self.token}/{method}"
         attempt = 0
         while True:
             attempt += 1
-            await self._rate_limiter.acquire()
+            await self._rate_limiters[method].acquire()
             start = time.monotonic()
             try:
                 response = await self._client.post(url, json=payload, timeout=self.timeout_seconds)

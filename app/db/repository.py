@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass
 from typing import Iterable
+
+from app.utils.cache import LruTtlCache
 
 
 @dataclass
@@ -18,13 +21,23 @@ class GroupSettings:
 
 
 class Repository:
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, cache_size: int = 1024, cache_ttl_seconds: int = 90) -> None:
         self.db_path = db_path
+        self._group_cache = LruTtlCache[str, GroupSettings](cache_size, cache_ttl_seconds)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        self._apply_pragmas(conn)
         return conn
+
+    def _apply_pragmas(self, conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
+        conn.execute("PRAGMA cache_size=-20000;")
+        conn.execute("PRAGMA busy_timeout=3000;")
+        conn.execute("PRAGMA foreign_keys=ON;")
 
     def upsert_group(self, chat_id: str, title: str | None) -> GroupSettings:
         with self._connect() as conn:
@@ -39,13 +52,17 @@ class Repository:
                 (chat_id, title),
             )
             conn.commit()
+        self._group_cache.invalidate(chat_id)
         return self.get_group(chat_id)
 
     def get_group(self, chat_id: str) -> GroupSettings:
+        cached = self._group_cache.get(chat_id)
+        if cached:
+            return cached
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM groups WHERE chat_id = ?;", (chat_id,)).fetchone()
             if row is None:
-                return GroupSettings(
+                settings = GroupSettings(
                     chat_id=chat_id,
                     title=None,
                     anti_link=True,
@@ -55,7 +72,9 @@ class Repository:
                     anti_forward=False,
                     flood_limit=6,
                 )
-            return GroupSettings(
+                self._group_cache.set(chat_id, settings)
+                return settings
+            settings = GroupSettings(
                 chat_id=row["chat_id"],
                 title=row["title"],
                 anti_link=bool(row["anti_link"]),
@@ -65,6 +84,8 @@ class Repository:
                 anti_forward=bool(row["anti_forward"]),
                 flood_limit=int(row["flood_limit"]),
             )
+            self._group_cache.set(chat_id, settings)
+            return settings
 
     def set_group_flag(self, chat_id: str, key: str, value: bool) -> None:
         with self._connect() as conn:
@@ -73,6 +94,7 @@ class Repository:
                 (1 if value else 0, chat_id),
             )
             conn.commit()
+        self._group_cache.invalidate(chat_id)
 
     def add_admin(self, chat_id: str, user_id: str, role: str = "admin") -> None:
         with self._connect() as conn:
@@ -178,6 +200,38 @@ class Repository:
                 (job_id, received_at, chat_id, message_id, sender_id, update_type, text, raw_payload),
             )
             conn.commit()
+
+    def cleanup_incoming_updates(self, max_age_seconds: int) -> int:
+        cutoff = time.time() - max_age_seconds
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM incoming_updates WHERE received_at < ?;", (cutoff,))
+            conn.commit()
+            return cursor.rowcount
+
+    def trim_messages_per_chat(self, limit_per_chat: int) -> int:
+        total_deleted = 0
+        with self._connect() as conn:
+            chat_rows = conn.execute("SELECT DISTINCT chat_id FROM messages;").fetchall()
+            for row in chat_rows:
+                chat_id = row["chat_id"]
+                cursor = conn.execute(
+                    """
+                    DELETE FROM messages
+                    WHERE chat_id = ?
+                    AND id NOT IN (
+                        SELECT id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
+                    );
+                    """,
+                    (chat_id, chat_id, limit_per_chat),
+                )
+                total_deleted += cursor.rowcount
+            conn.commit()
+        return total_deleted
+
+    def count_records(self, table: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT COUNT(1) AS total FROM {table};").fetchone()
+            return int(row["total"] if row else 0)
 
     def fetch_latest_message(self) -> sqlite3.Row | None:
         with self._connect() as conn:

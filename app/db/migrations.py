@@ -6,7 +6,7 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 INITIAL_SCHEMA = [
@@ -95,6 +95,10 @@ INITIAL_SCHEMA = [
     CREATE INDEX IF NOT EXISTS idx_incoming_updates_job
         ON incoming_updates (job_id);
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_incoming_updates_received
+        ON incoming_updates (received_at);
+    """,
 ]
 
 
@@ -127,6 +131,12 @@ MIGRATIONS = {
         """
         CREATE INDEX IF NOT EXISTS idx_incoming_updates_job
             ON incoming_updates (job_id);
+        """,
+    ],
+    4: [
+        """
+        CREATE INDEX IF NOT EXISTS idx_incoming_updates_received
+            ON incoming_updates (received_at);
         """,
     ],
 }
