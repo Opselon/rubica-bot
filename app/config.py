@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", env="RUBIKA_LOG_LEVEL")
     log_file: str = Field(default="/var/log/rubika-bot/app.log", env="RUBIKA_LOG_FILE")
     worker_concurrency: int = Field(default=4, env="RUBIKA_WORKER_CONCURRENCY")
+    queue_max_size: int = Field(default=1000, env="RUBIKA_QUEUE_MAX_SIZE")
+    queue_full_policy: str = Field(default="reject", env="RUBIKA_QUEUE_FULL_POLICY")
     rate_limit_per_minute: int = Field(default=120, env="RUBIKA_RATE_LIMIT_PER_MINUTE")
     dedup_ttl_seconds: int = Field(default=120, env="RUBIKA_DEDUP_TTL_SECONDS")
     register_webhook: bool = Field(default=True, env="RUBIKA_REGISTER_WEBHOOK")

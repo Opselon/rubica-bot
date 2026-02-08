@@ -6,7 +6,7 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 INITIAL_SCHEMA = [
@@ -77,6 +77,24 @@ INITIAL_SCHEMA = [
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS incoming_updates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        received_at REAL NOT NULL,
+        chat_id TEXT,
+        message_id TEXT,
+        sender_id TEXT,
+        update_type TEXT,
+        text TEXT,
+        raw_payload TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_incoming_updates_job
+        ON incoming_updates (job_id);
+    """,
 ]
 
 
@@ -89,6 +107,26 @@ MIGRATIONS = {
             value TEXT NOT NULL,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+        """,
+    ],
+    3: [
+        """
+        CREATE TABLE IF NOT EXISTS incoming_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            received_at REAL NOT NULL,
+            chat_id TEXT,
+            message_id TEXT,
+            sender_id TEXT,
+            update_type TEXT,
+            text TEXT,
+            raw_payload TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_incoming_updates_job
+            ON incoming_updates (job_id);
         """,
     ],
 }

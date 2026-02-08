@@ -7,10 +7,11 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from app.config import settings
+from app.core.queue import JobQueue
+from app.core.worker import WorkerPool
 from app.db import Repository, ensure_schema
 from app.logging_config import setup_logging
-from app.services.api_client import RubikaClient
-from app.services.dispatcher import Dispatcher
+from app.core.rubika_client import RubikaClient
 from app.services.handlers import (
     about_handler,
     admins_handler,
@@ -107,8 +108,19 @@ async def startup() -> None:
             PanelPlugin(),
         ]
     )
-    dispatcher = Dispatcher(registry, settings.worker_concurrency, stats=stats)
-    await dispatcher.start()
+    deduplicator = Deduplicator(settings.dedup_ttl_seconds)
+    queue = JobQueue(
+        max_size=settings.queue_max_size,
+        deduplicator=deduplicator,
+        full_policy=settings.queue_full_policy,
+        stats=stats,
+    )
+
+    async def _process_job(job) -> None:
+        await registry.dispatch(job.raw_payload or {}, {**app.state.context, "job": job})
+
+    worker = WorkerPool(queue, _process_job, concurrency=settings.worker_concurrency, stats=stats)
+    await worker.start()
     app.state.context = {
         "repo": repo,
         "client": client,
@@ -118,7 +130,8 @@ async def startup() -> None:
         "version": __version__,
         "owner_id": settings.owner_id,
     }
-    app.state.dispatcher = dispatcher
+    app.state.queue = queue
+    app.state.worker = worker
 
     if settings.register_webhook and settings.webhook_base_url:
         webhook_base = settings.webhook_base_url.rstrip("/")
@@ -133,8 +146,8 @@ async def startup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    dispatcher = app.state.dispatcher
-    await dispatcher.stop()
+    worker = app.state.worker
+    await worker.stop()
     await app.state.context["client"].close()
 
 
@@ -143,7 +156,6 @@ app.include_router(
     build_router(
         settings=settings,
         rate_limiter=rate_limiter,
-        deduplicator=Deduplicator(settings.dedup_ttl_seconds),
     )
 )
 
@@ -151,3 +163,36 @@ app.include_router(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health/queue")
+async def health_queue() -> dict[str, object]:
+    queue = app.state.queue
+    worker = app.state.worker
+    stats = app.state.context["stats"]
+    return {
+        "queue": {
+            "size": queue.size(),
+            "max_size": queue.max_size,
+            "total_enqueued": stats.total_enqueued,
+            "total_dropped": stats.total_dropped,
+            "total_deduped": stats.total_deduped,
+        },
+        "workers": [
+            {
+                "id": status.worker_id,
+                "alive": status.alive,
+                "processed": status.processed,
+                "last_job_at": status.last_job_at,
+                "last_error": status.last_error,
+                "last_error_at": status.last_error_at,
+            }
+            for status in worker.statuses()
+        ],
+        "stats": {
+            "total_updates": stats.total_updates,
+            "total_errors": stats.total_errors,
+            "avg_dispatch_ms": stats.average_dispatch_ms,
+            "last_dispatch_ms": stats.last_dispatch_ms,
+        },
+    }

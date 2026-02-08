@@ -8,6 +8,7 @@ def test_stats_collector_records_metrics() -> None:
     stats.record_enqueue(3)
     stats.record_dispatch(12.5)
     assert stats.total_updates == 1
+    assert stats.total_enqueued == 1
     assert stats.last_queue_size == 3
     assert stats.average_dispatch_ms == 12.5
 
