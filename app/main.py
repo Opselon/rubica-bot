@@ -65,7 +65,14 @@ async def startup() -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     ensure_schema(db_path)
     repo = Repository(db_path)
-    client = RubikaClient(settings.bot_token, settings.api_base_url)
+    client = RubikaClient(
+        settings.bot_token,
+        settings.api_base_url,
+        timeout_seconds=settings.api_timeout_seconds,
+        retry_attempts=settings.api_retry_attempts,
+        retry_backoff=settings.api_retry_backoff,
+        rate_limit_per_second=settings.api_rate_limit_per_second,
+    )
     stats = StatsCollector()
     command_registry = CommandRegistry()
     command_registry.register(Command("help", "نمایش راهنما", help_handler))
