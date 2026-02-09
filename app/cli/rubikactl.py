@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import shutil
@@ -7,6 +5,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import httpx
@@ -21,11 +20,11 @@ from rich.text import Text
 from install import render_env
 from app.cli.doctor_utils import mask_secret, parse_sqlite_path
 
-app = typer.Typer(help="Rubika Bot control CLI")
+app = typer.Typer(help="Rubika Bot control CLI", rich_markup_mode=None)
 console = Console()
-db_app = typer.Typer(help="SQLite maintenance commands")
-fix_app = typer.Typer(help="Fix common issues")
-queue_app = typer.Typer(help="Queue utilities")
+db_app = typer.Typer(help="SQLite maintenance commands", rich_markup_mode=None)
+fix_app = typer.Typer(help="Fix common issues", rich_markup_mode=None)
+queue_app = typer.Typer(help="Queue utilities", rich_markup_mode=None)
 
 app.add_typer(db_app, name="db")
 app.add_typer(fix_app, name="fix")
@@ -109,6 +108,65 @@ def _warning_result(label: str, detail: str, fix: str | None = None) -> Table:
     if fix:
         table.add_row("", Text(f"Fix: {fix}", style="yellow"))
     return table
+
+
+@dataclass
+class DoctorCheck:
+    section: str
+    status: str
+    label: str
+    detail: str
+    fix: str | None = None
+
+
+def _add_check(
+    checks: list[DoctorCheck],
+    section: str,
+    ok: bool,
+    label: str,
+    detail: str,
+    fix: str | None = None,
+) -> None:
+    status = "ok" if ok else "fail"
+    checks.append(DoctorCheck(section=section, status=status, label=label, detail=detail, fix=fix))
+
+
+def _add_warning(
+    checks: list[DoctorCheck],
+    section: str,
+    label: str,
+    detail: str,
+    fix: str | None = None,
+) -> None:
+    checks.append(DoctorCheck(section=section, status="warn", label=label, detail=detail, fix=fix))
+
+
+def _render_doctor_tables(checks: list[DoctorCheck]) -> tuple[int, int]:
+    status_icon = {"ok": "✅", "warn": "⚠️", "fail": "❌"}
+    status_style = {"ok": "green", "warn": "yellow", "fail": "red"}
+    failures = 0
+    warnings = 0
+    for section in dict.fromkeys(check.section for check in checks):
+        console.print(Panel.fit(section, style="bold cyan"))
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Status", width=6)
+        table.add_column("Check", style="bold")
+        table.add_column("Detail")
+        table.add_column("Fix")
+        for check in [item for item in checks if item.section == section]:
+            if check.status == "fail":
+                failures += 1
+            if check.status == "warn":
+                warnings += 1
+            fix_text = f"Fix: {check.fix}" if check.fix else "-"
+            table.add_row(
+                Text(status_icon[check.status], style=status_style[check.status]),
+                check.label,
+                check.detail,
+                fix_text,
+            )
+        console.print(table)
+    return failures, warnings
 
 
 @app.command()
@@ -278,8 +336,15 @@ def doctor(
     test_webhook: bool = typer.Option(False, "--test-webhook"),
     apply_webhook: bool = typer.Option(False, "--apply-webhook"),
     yes: bool = typer.Option(False, "--yes"),
+    skip_systemd: bool = typer.Option(False, "--skip-systemd"),
+    skip_nginx: bool = typer.Option(False, "--skip-nginx"),
+    skip_queue: bool = typer.Option(False, "--skip-queue"),
+    skip_rubika: bool = typer.Option(False, "--skip-rubika"),
+    skip_dns: bool = typer.Option(False, "--skip-dns"),
+    skip_db: bool = typer.Option(False, "--skip-db"),
 ) -> None:
     console.print(Panel.fit("Rubika Bot Doctor", style="bold cyan"))
+    checks: list[DoctorCheck] = []
     env_path = path / ".env"
     env_data = read_env(env_path)
     token = env_data.get("RUBIKA_BOT_TOKEN", "")
@@ -288,49 +353,47 @@ def doctor(
     api_base = api_base_url or env_data.get("RUBIKA_API_BASE_URL", "https://botapi.rubika.ir/v3")
     db_url = env_data.get("RUBIKA_DB_URL", "sqlite:///data/bot.db")
 
-    section = Table.grid(padding=(1, 1))
-    section.add_row(Text("A) System & Prerequisites", style="bold magenta"))
-    console.print(section)
+    section = "A) System & Prerequisites"
 
     python_ok = sys.version_info >= (3, 10)
-    console.print(
-        _check_result(
-            python_ok,
-            "Python Version",
-            f"{sys.version.split()[0]}",
-            "Upgrade to Python 3.10+",
-        )
+    _add_check(
+        checks,
+        section,
+        python_ok,
+        "Python Version",
+        f"{sys.version.split()[0]}",
+        "Upgrade to Python 3.10+",
     )
     venv_active = bool(os.environ.get("VIRTUAL_ENV")) or sys.prefix != sys.base_prefix
-    console.print(
-        _check_result(
-            venv_active,
-            "Virtualenv",
-            os.environ.get("VIRTUAL_ENV", "not active"),
-            "Activate venv: source .venv/bin/activate",
-        )
+    _add_check(
+        checks,
+        section,
+        venv_active,
+        "Virtualenv",
+        os.environ.get("VIRTUAL_ENV", "not active"),
+        "Activate venv: source .venv/bin/activate",
     )
-    console.print(
-        _check_result(
-            path.exists(),
-            "Install Path",
-            str(path),
-            "Ensure /opt/rubika-bot exists or pass --path",
-        )
+    _add_check(
+        checks,
+        section,
+        path.exists(),
+        "Install Path",
+        str(path),
+        "Ensure /opt/rubika-bot exists or pass --path",
     )
     try:
         disk = shutil.disk_usage(path if path.exists() else Path("/"))
         disk_gb = disk.free / (1024**3)
-        console.print(
-            _check_result(
-                disk_gb > 1.0,
-                "Disk Free",
-                f"{disk_gb:.2f} GB free",
-                "Free up disk space",
-            )
+        _add_check(
+            checks,
+            section,
+            disk_gb > 1.0,
+            "Disk Free",
+            f"{disk_gb:.2f} GB free",
+            "Free up disk space",
         )
     except OSError as exc:
-        console.print(_warning_result("Disk Free", f"Unable to read disk: {exc}"))
+        _add_warning(checks, section, "Disk Free", f"Unable to read disk: {exc}")
     try:
         mem_total_kb = 0
         with open("/proc/meminfo", encoding="utf-8") as handle:
@@ -339,144 +402,159 @@ def doctor(
                     mem_total_kb = int(line.split()[1])
                     break
         mem_gb = mem_total_kb / (1024**2)
-        console.print(
-            _check_result(
-                mem_gb > 0.5,
-                "RAM Available",
-                f"{mem_gb:.2f} GB available",
-                "Close heavy processes or increase RAM",
-            )
+        _add_check(
+            checks,
+            section,
+            mem_gb > 0.5,
+            "RAM Available",
+            f"{mem_gb:.2f} GB available",
+            "Close heavy processes or increase RAM",
         )
     except OSError as exc:
-        console.print(_warning_result("RAM Available", f"Unable to read /proc/meminfo: {exc}"))
-    try:
-        socket.gethostbyname("botapi.rubika.ir")
-        console.print(_check_result(True, "DNS", "botapi.rubika.ir resolved"))
-    except OSError as exc:
-        console.print(_check_result(False, "DNS", str(exc), "Fix DNS or network connectivity"))
+        _add_warning(checks, section, "RAM Available", f"Unable to read /proc/meminfo: {exc}")
+    if skip_dns:
+        _add_warning(checks, section, "DNS", "Skipped", "Remove --skip-dns to validate DNS")
+    else:
+        try:
+            socket.gethostbyname("botapi.rubika.ir")
+            _add_check(checks, section, True, "DNS", "botapi.rubika.ir resolved")
+        except OSError as exc:
+            _add_check(checks, section, False, "DNS", str(exc), "Fix DNS or network connectivity")
 
-    section = Table.grid(padding=(1, 1))
-    section.add_row(Text("B) Service & Runtime", style="bold magenta"))
-    console.print(section)
+    section = "B) Service & Runtime"
 
-    try:
-        status = run(["systemctl", "show", service, "-p", "ActiveState", "-p", "NRestarts", "-p", "ExecMainStatus"])
-        status_data = dict(line.split("=", 1) for line in status.stdout.splitlines() if "=" in line)
-        active = status_data.get("ActiveState") == "active"
-        console.print(
-            _check_result(
+    if skip_systemd:
+        _add_warning(checks, section, "systemd", "Skipped", "Remove --skip-systemd to check service")
+    else:
+        try:
+            status = subprocess.run(
+                ["systemctl", "show", service, "-p", "ActiveState", "-p", "NRestarts", "-p", "ExecMainStatus"],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            status_data = dict(line.split("=", 1) for line in status.stdout.splitlines() if "=" in line)
+            active = status_data.get("ActiveState") == "active"
+            _add_check(
+                checks,
+                section,
                 active,
                 "systemd",
                 json.dumps(status_data, ensure_ascii=False),
                 f"systemctl restart {service}",
             )
-        )
-    except subprocess.CalledProcessError as exc:
-        console.print(_warning_result("systemd", f"systemctl failed: {exc}", "Check service name and permissions"))
+        except subprocess.CalledProcessError as exc:
+            _add_warning(checks, section, "systemd", f"systemctl failed: {exc}", "Check service name and permissions")
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
-            console.print(_check_result(True, "App Port", f"127.0.0.1:{port} open"))
+            _add_check(checks, section, True, "App Port", f"127.0.0.1:{port} open")
     except OSError as exc:
-        console.print(_check_result(False, "App Port", str(exc), "Check app service and --port"))
+        _add_check(checks, section, False, "App Port", str(exc), "Check app service and --port")
 
-    try:
-        nginx_status = run(["systemctl", "is-active", "nginx"], check=False)
-        nginx_active = nginx_status.returncode == 0
-        console.print(
-            _check_result(
+    if skip_nginx:
+        _add_warning(checks, section, "Nginx", "Skipped", "Remove --skip-nginx to check Nginx")
+    else:
+        try:
+            nginx_status = subprocess.run(
+                ["systemctl", "is-active", "nginx"],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            nginx_active = nginx_status.returncode == 0
+            _add_check(
+                checks,
+                section,
                 nginx_active,
                 "Nginx",
                 nginx_status.stdout.strip() or nginx_status.stderr.strip(),
                 "systemctl restart nginx",
             )
-        )
-        if nginx_active:
-            nginx_test = run(["nginx", "-t"], check=False)
-            ok = nginx_test.returncode == 0
-            console.print(
-                _check_result(
+            if nginx_active:
+                nginx_test = subprocess.run(["nginx", "-t"], check=False, text=True, capture_output=True)
+                ok = nginx_test.returncode == 0
+                _add_check(
+                    checks,
+                    section,
                     ok,
                     "Nginx Config",
                     (nginx_test.stdout or nginx_test.stderr).strip(),
                     "Fix nginx config syntax",
                 )
-            )
-    except FileNotFoundError:
-        console.print(_warning_result("Nginx", "nginx not installed"))
+        except FileNotFoundError:
+            _add_warning(checks, section, "Nginx", "nginx not installed")
 
-    section = Table.grid(padding=(1, 1))
-    section.add_row(Text("C) Configuration", style="bold magenta"))
-    console.print(section)
+    section = "C) Configuration"
 
-    console.print(
-        _check_result(
-            env_path.exists(),
-            ".env file",
-            str(env_path),
-            "Run rubikactl configure",
-        )
+    _add_check(
+        checks,
+        section,
+        env_path.exists(),
+        ".env file",
+        str(env_path),
+        "Run rubikactl configure",
     )
-    console.print(
-        _check_result(
-            bool(token),
-            "TOKEN",
-            mask_secret(token),
-            "Set RUBIKA_BOT_TOKEN in .env",
-        )
+    _add_check(
+        checks,
+        section,
+        bool(token),
+        "TOKEN",
+        mask_secret(token),
+        "Set RUBIKA_BOT_TOKEN in .env",
     )
-    console.print(
-        _check_result(
-            bool(owner_id),
-            "OWNER_ID",
-            owner_id or "missing",
-            "Set RUBIKA_OWNER_ID in .env",
-        )
+    _add_check(
+        checks,
+        section,
+        bool(owner_id),
+        "OWNER_ID",
+        owner_id or "missing",
+        "Set RUBIKA_OWNER_ID in .env",
     )
-    console.print(
-        _check_result(
-            bool(webhook_url),
-            "WEBHOOK_BASE_URL",
-            webhook_url or "missing",
-            "Set RUBIKA_WEBHOOK_BASE_URL in .env",
-        )
+    _add_check(
+        checks,
+        section,
+        bool(webhook_url),
+        "WEBHOOK_BASE_URL",
+        webhook_url or "missing",
+        "Set RUBIKA_WEBHOOK_BASE_URL in .env",
     )
 
-    section = Table.grid(padding=(1, 1))
-    section.add_row(Text("D) Rubika API", style="bold magenta"))
-    console.print(section)
+    section = "D) Rubika API"
 
-    if token:
+    if skip_rubika:
+        _add_warning(checks, section, "getMe", "Skipped", "Remove --skip-rubika to validate API")
+    elif token:
         try:
             response = httpx.post(f"{api_base.rstrip('/')}/{token}/getMe", json={}, timeout=10)
             ok = response.status_code == 200
-            console.print(
-                _check_result(
-                    ok,
-                    "getMe",
-                    response.text[:200],
-                    "Check token and network connectivity",
-                )
+            _add_check(
+                checks,
+                section,
+                ok,
+                "getMe",
+                response.text[:200],
+                "Check token and network connectivity",
             )
         except httpx.RequestError as exc:
-            console.print(_check_result(False, "getMe", str(exc), "Check network connectivity"))
+            _add_check(checks, section, False, "getMe", str(exc), "Check network connectivity")
     else:
-        console.print(_warning_result("getMe", "Skipped: token missing"))
+        _add_warning(checks, section, "getMe", "Skipped: token missing")
 
     if send_owner and token and owner_id:
         if yes or Prompt.ask("Send test message to owner? (y/n)", default="n").lower() == "y":
             try:
                 payload = {"chat_id": owner_id, "text": "Rubika doctor test message."}
                 response = httpx.post(f"{api_base.rstrip('/')}/{token}/sendMessage", json=payload, timeout=10)
-                console.print(
-                    _check_result(
-                        response.status_code == 200,
-                        "sendMessage",
-                        response.text[:200],
-                        "Check owner ID permissions",
-                    )
+                _add_check(
+                    checks,
+                    section,
+                    response.status_code == 200,
+                    "sendMessage",
+                    response.text[:200],
+                    "Check owner ID permissions",
                 )
             except httpx.RequestError as exc:
-                console.print(_check_result(False, "sendMessage", str(exc), "Check network connectivity"))
+                _add_check(checks, section, False, "sendMessage", str(exc), "Check network connectivity")
 
     if test_webhook and token and webhook_url:
         urls = [f"{webhook_url.rstrip('/')}/receiveUpdate", f"{webhook_url.rstrip('/')}/receiveInlineMessage"]
@@ -487,132 +565,152 @@ def doctor(
                     json={"urls": urls},
                     timeout=10,
                 )
-                console.print(
-                    _check_result(
-                        response.status_code == 200,
-                        "updateBotEndpoints",
-                        response.text[:200],
-                        "Check webhook URL reachability",
-                    )
+                _add_check(
+                    checks,
+                    section,
+                    response.status_code == 200,
+                    "updateBotEndpoints",
+                    response.text[:200],
+                    "Check webhook URL reachability",
                 )
             except httpx.RequestError as exc:
-                console.print(_check_result(False, "updateBotEndpoints", str(exc), "Check network connectivity"))
+                _add_check(checks, section, False, "updateBotEndpoints", str(exc), "Check network connectivity")
         else:
-            console.print(_warning_result("updateBotEndpoints", f"Dry-run: {urls}", "Add --apply-webhook"))
+            _add_warning(checks, section, "updateBotEndpoints", f"Dry-run: {urls}", "Add --apply-webhook")
 
-    section = Table.grid(padding=(1, 1))
-    section.add_row(Text("E) Queue & Worker", style="bold magenta"))
-    console.print(section)
+    section = "E) Queue & Worker"
 
-    try:
-        response = httpx.get(f"http://127.0.0.1:{port}/health/queue", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            console.print(
-                _check_result(
+    if skip_queue:
+        _add_warning(checks, section, "Queue Status", "Skipped", "Remove --skip-queue to validate worker health")
+    else:
+        try:
+            response = httpx.get(f"http://127.0.0.1:{port}/health/queue", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                _add_check(
+                    checks,
+                    section,
                     True,
                     "Queue Status",
                     json.dumps(data.get("queue", {}), ensure_ascii=False),
                 )
-            )
-            queue_data = data.get("queue", {})
-            if queue_data.get("size", 0) > 500:
-                console.print(
-                    _warning_result(
+                queue_data = data.get("queue", {})
+                if queue_data.get("size", 0) > 500:
+                    _add_warning(
+                        checks,
+                        section,
                         "Queue Backlog",
                         json.dumps(queue_data, ensure_ascii=False),
                         "Consider increasing workers or enabling priority queues",
                     )
-                )
-            workers = data.get("workers", [])
-            console.print(
-                _check_result(
+                workers = data.get("workers", [])
+                _add_check(
+                    checks,
+                    section,
                     True,
                     "Workers",
                     json.dumps(workers, ensure_ascii=False),
                 )
-            )
-            console.print(
-                _check_result(
+                _add_check(
+                    checks,
+                    section,
                     True,
                     "Processing Stats",
                     json.dumps(data.get("stats", {}), ensure_ascii=False),
                 )
-            )
-        else:
-            console.print(_check_result(False, "Queue Status", response.text, "Check app service health"))
-    except httpx.RequestError as exc:
-        console.print(_warning_result("Queue Status", str(exc), "Ensure app is running"))
+            else:
+                _add_check(checks, section, False, "Queue Status", response.text, "Check app service health")
+        except httpx.RequestError as exc:
+            _add_warning(checks, section, "Queue Status", str(exc), "Ensure app is running")
 
-    section = Table.grid(padding=(1, 1))
-    section.add_row(Text("F) SQLite Database", style="bold magenta"))
-    console.print(section)
+    section = "F) SQLite Database"
 
-    db_path = parse_sqlite_path(db_url)
-    try:
-        if not Path(db_path).exists():
-            console.print(_check_result(False, "Database File", db_path, "Check RUBIKA_DB_URL or migrations"))
-        else:
-            size_mb = Path(db_path).stat().st_size / (1024**2)
-            console.print(_check_result(True, "Database File", f"{db_path} ({size_mb:.2f} MB)"))
-            with sqlite3.connect(db_path) as conn:
-                quick_check = conn.execute("PRAGMA quick_check;").fetchone()
-                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
-                journal = conn.execute("PRAGMA journal_mode;").fetchone()
-                counts = _db_record_counts(conn)
-                console.print(
-                    _check_result(
+    if skip_db:
+        _add_warning(checks, section, "SQLite", "Skipped", "Remove --skip-db to inspect DB health")
+    else:
+        db_path = parse_sqlite_path(db_url)
+        try:
+            if not Path(db_path).exists():
+                _add_check(checks, section, False, "Database File", db_path, "Check RUBIKA_DB_URL or migrations")
+            else:
+                size_mb = Path(db_path).stat().st_size / (1024**2)
+                _add_check(checks, section, True, "Database File", f"{db_path} ({size_mb:.2f} MB)")
+                with sqlite3.connect(db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    quick_check = conn.execute("PRAGMA quick_check;").fetchone()
+                    tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
+                    journal = conn.execute("PRAGMA journal_mode;").fetchone()
+                    counts = _db_record_counts(conn)
+                    _add_check(
+                        checks,
+                        section,
                         quick_check and quick_check[0] == "ok",
                         "SQLite quick_check",
                         str(quick_check[0] if quick_check else "unknown"),
                         "Restore from backup or recreate DB",
                     )
-                )
-                console.print(
-                    _check_result(
-                        journal and journal[0].lower() == "wal",
-                        "WAL mode",
-                        str(journal[0] if journal else "unknown"),
-                        "Run: rubikactl fix db",
-                    )
-                )
-                console.print(
-                    _check_result(
+                    wal_ok = journal and journal[0].lower() == "wal"
+                    if wal_ok:
+                        _add_check(
+                            checks,
+                            section,
+                            True,
+                            "WAL mode",
+                            str(journal[0] if journal else "unknown"),
+                        )
+                    else:
+                        _add_warning(
+                            checks,
+                            section,
+                            "WAL mode",
+                            str(journal[0] if journal else "unknown"),
+                            "Run: rubikactl fix db",
+                        )
+                    _add_check(
+                        checks,
+                        section,
                         True,
                         "Tables",
                         ", ".join(row[0] for row in tables),
                     )
-                )
-                console.print(
-                    _check_result(
+                    _add_check(
+                        checks,
+                        section,
                         True,
                         "Record counts",
                         json.dumps(counts, ensure_ascii=False),
                     )
-                )
-                last_message = conn.execute("SELECT * FROM messages ORDER BY id DESC LIMIT 1;").fetchone()
-                detail = dict(last_message) if last_message else {}
-                console.print(_check_result(True, "Last Message", json.dumps(detail, ensure_ascii=False)))
-            retention_hours = int(env_data.get("RUBIKA_INCOMING_UPDATES_RETENTION_HOURS", "48") or 48)
-            retention_enabled = env_data.get("RUBIKA_INCOMING_UPDATES_ENABLED", "true").lower() != "false"
-            console.print(
-                _check_result(
+                    last_message = conn.execute("SELECT * FROM messages ORDER BY id DESC LIMIT 1;").fetchone()
+                    detail = dict(last_message) if last_message else {}
+                    _add_check(checks, section, True, "Last Message", json.dumps(detail, ensure_ascii=False))
+                retention_hours = int(env_data.get("RUBIKA_INCOMING_UPDATES_RETENTION_HOURS", "48") or 48)
+                retention_enabled = env_data.get("RUBIKA_INCOMING_UPDATES_ENABLED", "true").lower() != "false"
+                _add_check(
+                    checks,
+                    section,
                     retention_enabled,
                     "Retention",
                     f"incoming_updates {retention_hours}h",
                     "Set RUBIKA_INCOMING_UPDATES_RETENTION_HOURS and enable janitor",
                 )
-            )
-            if size_mb > 500:
-                console.print(
-                    _warning_result(
+                if size_mb > 500:
+                    _add_warning(
+                        checks,
+                        section,
                         "Database Size",
                         f"{size_mb:.2f} MB",
                         "Run: rubikactl db cleanup --days 2 --keep-per-chat 10000",
                     )
-                )
-    except Exception as exc:  # noqa: BLE001
-        console.print(_check_result(False, "SQLite", str(exc), "Check DB permissions or corruption"))
+        except Exception as exc:  # noqa: BLE001
+            _add_check(checks, section, False, "SQLite", str(exc), "Check DB permissions or corruption")
+
+    failures, warnings = _render_doctor_tables(checks)
+    if failures == 0 and warnings == 0:
+        console.print(Panel.fit("Overall: OK", style="bold green"))
+    elif failures == 0:
+        console.print(Panel.fit("Overall: OK (with warnings)", style="bold yellow"))
+    else:
+        console.print(Panel.fit("Overall: Issues detected", style="bold red"))
 
 
 @db_app.command("stats")

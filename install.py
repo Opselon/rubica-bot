@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -155,7 +156,11 @@ def render_nginx_config(server_name: str, host: str, port: int) -> str:
 def ensure_venv(venv_path: Path) -> None:
     if venv_path.exists():
         return
-    run([sys.executable, "-m", "venv", str(venv_path)])
+    cmd = [sys.executable, "-m", "venv"]
+    if os.environ.get("RUBIKA_TEST_MODE") == "1":
+        cmd.append("--system-site-packages")
+    cmd.append(str(venv_path))
+    run(cmd)
 
 
 def install_requirements(venv_path: Path) -> None:
@@ -176,6 +181,9 @@ def write_file(path: Path, content: str, overwrite: bool) -> None:
 
 
 def install_dependencies(with_nginx: bool, with_ssl: bool) -> None:
+    if os.environ.get("RUBIKA_TEST_MODE") == "1":
+        get_console().print("⚠️ Test mode enabled: skipping OS dependency install.", style="yellow")
+        return
     if shutil.which("apt-get") is None:
         get_console().print("⚠️ apt-get یافت نشد. نصب پیش‌نیازها رد شد.", style="yellow")
         return
@@ -190,8 +198,13 @@ def install_dependencies(with_nginx: bool, with_ssl: bool) -> None:
 
 
 def install_systemd_service(service_path: Path, service_name: str) -> None:
-    target = Path("/etc/systemd/system") / service_path.name
+    target_dir = Path(os.environ.get("RUBIKA_SYSTEMD_DIR", "/etc/systemd/system"))
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / service_path.name
     shutil.copy2(service_path, target)
+    if os.environ.get("RUBIKA_SKIP_SYSTEMCTL") == "1":
+        get_console().print("⚠️ Skipping systemctl calls (RUBIKA_SKIP_SYSTEMCTL=1).", style="yellow")
+        return
     run(["systemctl", "daemon-reload"])
     run(["systemctl", "enable", service_name])
     run(["systemctl", "restart", service_name])
@@ -199,8 +212,9 @@ def install_systemd_service(service_path: Path, service_name: str) -> None:
 
 def setup_nginx(service_name: str, server_name: str, host: str, port: int, with_ssl: bool) -> None:
     config_text = render_nginx_config(server_name, host, port)
-    sites_available = Path("/etc/nginx/sites-available")
-    sites_enabled = Path("/etc/nginx/sites-enabled")
+    nginx_root = Path(os.environ.get("RUBIKA_NGINX_DIR", "/etc/nginx"))
+    sites_available = nginx_root / "sites-available"
+    sites_enabled = nginx_root / "sites-enabled"
     sites_available.mkdir(parents=True, exist_ok=True)
     sites_enabled.mkdir(parents=True, exist_ok=True)
     config_path = sites_available / f"{service_name}.conf"
@@ -209,7 +223,10 @@ def setup_nginx(service_name: str, server_name: str, host: str, port: int, with_
     if not link_path.exists():
         link_path.symlink_to(config_path)
     run(["nginx", "-t"])
-    run(["systemctl", "reload", "nginx"])
+    if os.environ.get("RUBIKA_SKIP_SYSTEMCTL") == "1":
+        get_console().print("⚠️ Skipping systemctl reload nginx (RUBIKA_SKIP_SYSTEMCTL=1).", style="yellow")
+    else:
+        run(["systemctl", "reload", "nginx"])
     if with_ssl:
         run(["certbot", "--nginx", "-d", server_name])
 
@@ -248,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", default=8080, type=int)
     parser.add_argument("--no-tests", action="store_true")
+    parser.add_argument("--skip-pip", action="store_true", help="عدم نصب وابستگی‌ها (برای تست)")
     parser.add_argument("--no-systemd", action="store_true")
     parser.add_argument("--no-env", action="store_true")
     parser.add_argument("--force", action="store_true", help="بازنویسی فایل‌ها در صورت وجود")
@@ -329,20 +347,26 @@ def bootstrap_from_github(args: argparse.Namespace) -> None:
 
 def collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
     if args.non_interactive:
-        if not args.token or not args.owner_id:
+        token = args.token or os.environ.get("RUBIKA_BOT_TOKEN", "")
+        owner_id = args.owner_id or os.environ.get("RUBIKA_OWNER_ID", "")
+        api_base_url = args.api_base_url or os.environ.get("RUBIKA_API_BASE_URL", args.api_base_url)
+        webhook_base_url = args.webhook_base_url or os.environ.get("RUBIKA_WEBHOOK_BASE_URL", "")
+        webhook_secret = args.webhook_secret or os.environ.get("RUBIKA_WEBHOOK_SECRET", "")
+        if not token or not owner_id:
             raise ValueError("در حالت non-interactive باید --token و --owner-id مشخص شود.")
-        webhook_base_url = validate_url(args.webhook_base_url, allow_empty=True)
+        webhook_base_url = validate_url(webhook_base_url, allow_empty=True)
         return {
-            "token": args.token,
-            "owner_id": args.owner_id,
-            "api_base_url": args.api_base_url,
+            "token": token,
+            "owner_id": owner_id,
+            "api_base_url": api_base_url,
             "webhook_base_url": webhook_base_url,
-            "webhook_secret": args.webhook_secret,
+            "webhook_secret": webhook_secret,
             "venv_path": Path(args.venv_path),
             "service_name": args.service_name,
             "host": args.host,
             "port": args.port,
             "run_tests": not args.no_tests,
+            "skip_pip": args.skip_pip,
             "write_env": not args.no_env,
             "write_systemd": not args.no_systemd,
             "force": args.force,
@@ -396,6 +420,7 @@ def collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
         "host": host,
         "port": port,
         "run_tests": run_tests_choice,
+        "skip_pip": False,
         "write_env": write_env_choice,
         "write_systemd": write_systemd_choice,
         "force": force_choice,
@@ -417,12 +442,31 @@ def main() -> None:
     venv_path = PROJECT_ROOT / str(data["venv_path"])
 
     from rich.panel import Panel
-    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+    from rich.table import Table
 
     console = get_console()
     console.print(Panel("شروع نصب", style="bold cyan"))
 
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as progress:
+    summary = Table(title="Installation Plan", show_header=True, header_style="bold magenta")
+    summary.add_column("Key")
+    summary.add_column("Value")
+    summary.add_row("Install Path", str(PROJECT_ROOT))
+    summary.add_row("Service Name", str(data["service_name"]))
+    summary.add_row("Host:Port", f"{data['host']}:{data['port']}")
+    summary.add_row("Venv", str(venv_path))
+    summary.add_row("Webhook Base URL", str(data["webhook_base_url"] or "-"))
+    summary.add_row("Run Tests", "yes" if data["run_tests"] else "no")
+    summary.add_row("Register Webhook", "yes" if data["register_webhook"] else "no")
+    console.print(summary)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
         if data["install_deps"]:
             task = progress.add_task("نصب پیش‌نیازها...", total=None)
             install_dependencies(data["with_nginx"], data["with_ssl"])
@@ -430,7 +474,10 @@ def main() -> None:
 
         task = progress.add_task("ایجاد محیط مجازی و نصب وابستگی‌ها...", total=None)
         ensure_venv(venv_path)
-        install_requirements(venv_path)
+        if data.get("skip_pip"):
+            console.print("⚠️ نصب وابستگی‌ها رد شد (skip-pip).", style="yellow")
+        else:
+            install_requirements(venv_path)
         progress.update(task, completed=1)
 
         if data["write_env"]:

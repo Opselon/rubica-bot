@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  rubica-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rubica-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RUBIKA_DB_URL: sqlite:///data/bot.db
+      RUBIKA_REGISTER_WEBHOOK: "false"
+      RUBIKA_LOG_LEVEL: INFO
+    ports:
+      - "8080:8080"
+    volumes:
+      - rubica-data:/data
+      - rubica-logs:/var/log/rubika-bot
+    networks:
+      - rubica-net
+
+volumes:
+  rubica-data:
+  rubica-logs:
+
+networks:
+  rubica-net:
+    driver: bridge
