@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -67,6 +68,7 @@ class JobQueue:
         self._size = 0
         self._lock = asyncio.Lock()
         self._max_size = max_size
+        self._last_queue = contextvars.ContextVar("jobqueue_last_queue", default=None)
         self.deduplicator = deduplicator
         self.full_policy = full_policy
         self.stats = stats
@@ -121,8 +123,10 @@ class JobQueue:
     async def get(self) -> Job | None:
         if not self.high_queue.empty():
             job = await self.high_queue.get()
+            self._last_queue.set("high")
         elif not self.normal_queue.empty():
             job = await self.normal_queue.get()
+            self._last_queue.set("normal")
         else:
             high_task = asyncio.create_task(self.high_queue.get())
             normal_task = asyncio.create_task(self.normal_queue.get())
@@ -132,16 +136,25 @@ class JobQueue:
             )
             for task in pending:
                 task.cancel()
-            job = next(iter(done)).result()
+            winner = next(iter(done))
+            job = winner.result()
+            if winner is high_task:
+                self._last_queue.set("high")
+            else:
+                self._last_queue.set("normal")
         self._size = max(0, self._size - 1)
         return job
 
     async def put_raw(self, job: Job | None) -> None:
         await self.high_queue.put(job)
 
-    def task_done(self, job: Job | None) -> None:
+    def task_done(self, job: Job | None = None) -> None:
         if job is None:
-            self.high_queue.task_done()
+            queue_name = self._last_queue.get()
+            if queue_name == "high":
+                self.high_queue.task_done()
+            elif queue_name == "normal":
+                self.normal_queue.task_done()
             return
         if job.priority == "high":
             self.high_queue.task_done()

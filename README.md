@@ -12,6 +12,7 @@
 - لاگ‌گیری چرخشی، مدیریت استثنا و ردیابی رخدادها
 - تست‌های Unit/Integration برای بخش‌های کلیدی
 - **کنترل حرفه‌ای درخواست‌های API** با timeout، retry هوشمند، rate-limit و لاگ دقیق
+- تست‌های End-to-End برای مسیرهای API و Moderation
 
 ## ساختار پوشه‌ها
 
@@ -120,6 +121,26 @@ python3 -m app.cli.rubikactl rollback --path /opt/rubika-bot
 - تشخیص نوع چت و تنظیمات Anti در DB
 - حذف پیام، بن/آن‌بن و مدیریت فیلترها
 - پنل مدیریتی با InlineKeypad
+
+## تست‌ها
+
+### اجرای تست‌های استاندارد
+
+```bash
+python -m pytest -m "not e2e"
+```
+
+### اجرای تست‌های End-to-End
+
+```bash
+python -m pytest -m e2e
+```
+
+### اجرای کامل
+
+```bash
+python -m pytest
+```
 
 ## قابلیت‌های Anti Everything
 
