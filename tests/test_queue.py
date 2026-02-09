@@ -18,3 +18,13 @@ def test_queue_enqueue_dequeue() -> None:
         queue.task_done()
 
     asyncio.run(_run())
+
+
+def test_queue_task_done_defaults_to_high_queue() -> None:
+    async def _run() -> None:
+        queue = JobQueue(max_size=10, deduplicator=Deduplicator(60))
+        await queue.put_raw(None)
+        await queue.get()
+        queue.task_done()
+
+    asyncio.run(_run())
