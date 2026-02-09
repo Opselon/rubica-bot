@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from importlib.util import find_spec
+
 from pydantic import BaseSettings, Field
+
+DOTENV_AVAILABLE = find_spec("dotenv") is not None
 
 
 class Settings(BaseSettings):
@@ -31,7 +35,7 @@ class Settings(BaseSettings):
     panel_enabled: bool = Field(default=True, env="RUBIKA_PANEL_ENABLED")
 
     class Config:
-        env_file = ".env"
+        env_file = ".env" if DOTENV_AVAILABLE else None
         case_sensitive = False
 
 
